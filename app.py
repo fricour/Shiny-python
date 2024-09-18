@@ -7,19 +7,15 @@ import numpy as np
 
 # Function to load the NetCDF file
 def load_netcdf(basedir, setup, station, is_rates=False):
-    file_name = f'{station}_rates.nc' if is_rates else f'{station}.nc'
+    file_name = f'{station}_result_rates.nc' if is_rates else f'{station}_result.nc'
     file_path = os.path.join(basedir, 'results', setup, file_name)
     if os.path.exists(file_path):
         return xr.open_dataset(file_path)
     return None
 
-# List of available stations and setups
-stations = ["MOW1", "W05", "W08"] # add new stations here
-setups = ["bgc_filtration", "bgc_filtration2", "bgc_2Fo"] # add new setups here
-
 # Define a list of colors and line styles
 colors = plt.cm.Set1(np.linspace(0, 1, 10))  # 10 distinct colors
-line_styles = ['-', '--', ':', '-.'] # add more if more than 4 setups 
+line_styles = ['-', '--', ':', '-.']
 
 app_ui = ui.page_fluid(
     ui.include_css("styles.css"),
@@ -30,8 +26,8 @@ app_ui = ui.page_fluid(
     ui.layout_sidebar(
         ui.sidebar(
             ui.input_text("basedir", "BCZ1D root directory", "/home/fricour/bcz1d"),
-            ui.input_selectize("setups", "Setups", choices=setups, multiple=True),
-            ui.input_selectize("stations", "Stations", choices=stations, multiple=True),
+            ui.input_text("stations", "Stations (comma-separated)", ""),
+            ui.input_text("setups", "Setups (comma-separated)", ""),
             ui.input_select("variable", "Variable (main)", choices=[]),
             ui.input_select("variable_rates", "Variable (rates)", choices=[]),
             ui.input_action_button("load_button", "Load NetCDF data"),
@@ -46,14 +42,20 @@ def server(input, output, session):
     datasets = reactive.Value({})
     datasets_rates = reactive.Value({})
     
+    def get_list_from_input(input_string):
+        return [item.strip() for item in input_string.split(',') if item.strip()]
+    
     @reactive.Effect
     @reactive.event(input.load_button)
     def load_data():
         nonlocal datasets, datasets_rates
         new_datasets = {}
         new_datasets_rates = {}
-        for setup in input.setups():
-            for station in input.stations():
+        stations = get_list_from_input(input.stations())
+        setups = get_list_from_input(input.setups())
+        
+        for setup in setups:
+            for station in stations:
                 dataset = load_netcdf(input.basedir(), setup, station)
                 dataset_rates = load_netcdf(input.basedir(), setup, station, is_rates=True)
                 if dataset is not None:
