@@ -6,9 +6,9 @@ from itertools import cycle
 import numpy as np
 
 # Function to load the NetCDF file
-def load_netcdf(basedir, setup, station, is_rates=False):
+def load_netcdf(result_dir, simulation_name, setup, station, is_rates=False):
     file_name = f'{station}_result_rates.nc' if is_rates else f'{station}_result.nc'
-    file_path = os.path.join(basedir, 'results', setup, file_name)
+    file_path = os.path.join(result_dir, simulation_name, setup, file_name)
     if os.path.exists(file_path):
         return xr.open_dataset(file_path)
     return None
@@ -25,7 +25,8 @@ app_ui = ui.page_fluid(
     ),
     ui.layout_sidebar(
         ui.sidebar(
-            ui.input_text("basedir", "BCZ1D root directory", "/home/fricour/bcz1d"),
+            ui.input_text("result_dir", "Result directory", "/home/fricour/bcz1d/results"),
+            ui.input_text("simulation_name", "Simulation name", ""),
             ui.input_text("stations", "Stations (comma-separated)", ""),
             ui.input_text("setups", "Setups (comma-separated)", ""),
             ui.input_select("variable", "Variable (main)", choices=[]),
@@ -56,8 +57,8 @@ def server(input, output, session):
         
         for setup in setups:
             for station in stations:
-                dataset = load_netcdf(input.basedir(), setup, station)
-                dataset_rates = load_netcdf(input.basedir(), setup, station, is_rates=True)
+                dataset = load_netcdf(input.result_dir(), input.simulation_name(), setup, station)
+                dataset_rates = load_netcdf(input.result_dir(), input.simulation_name(), setup, station, is_rates=True)
                 if dataset is not None:
                     new_datasets[(setup, station)] = dataset
                 if dataset_rates is not None:
@@ -82,7 +83,7 @@ def server(input, output, session):
     @render.text
     def error_message():
         if not datasets() and not datasets_rates():
-            return f"Error: Unable to load any NetCDF files. Please check the directory, setups, and stations."
+            return f"Error: Unable to load any NetCDF files. Please check the directory, simulation name, setups, and stations."
         return ""
 
     def plot_data(datasets, var, title):
