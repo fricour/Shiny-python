@@ -13,9 +13,8 @@ def load_netcdf(result_dir, simulation_name, setup, station, is_rates=False):
         return xr.open_dataset(file_path)
     return None
 
-# Define a list of colors and line styles
+# Define a list of colors for setups
 colors = plt.cm.Set1(np.linspace(0, 1, 10))  # 10 distinct colors
-line_styles = ['-', '--', ':', '-.']
 
 app_ui = ui.page_fluid(
     ui.include_css("styles.css"),
@@ -29,19 +28,16 @@ app_ui = ui.page_fluid(
             ui.input_text("simulation_name", "Simulation name", ""),
             ui.input_text("stations", "Stations (comma-separated)", ""),
             ui.input_text("setups", "Setups (comma-separated)", ""),
-            ui.input_select("variable", "Variable (main)", choices=[]),
-            ui.input_select("variable_rates", "Variable (rates)", choices=[]),
+            ui.input_selectize("variables", "Variables", choices=[], multiple=True),
             ui.input_action_button("load_button", "Load NetCDF data"),
         ),
-        ui.output_plot("plot_output"),
-        ui.output_plot("plot_output_rates"),
+        ui.output_plot("plot_grid"),
         ui.output_text("error_message"),
     ),
 )
 
 def server(input, output, session):
     datasets = reactive.Value({})
-    datasets_rates = reactive.Value({})
     
     def get_list_from_input(input_string):
         return [item.strip() for item in input_string.split(',') if item.strip()]
@@ -49,9 +45,8 @@ def server(input, output, session):
     @reactive.Effect
     @reactive.event(input.load_button)
     def load_data():
-        nonlocal datasets, datasets_rates
+        nonlocal datasets
         new_datasets = {}
-        new_datasets_rates = {}
         stations = get_list_from_input(input.stations())
         setups = get_list_from_input(input.setups())
         
@@ -60,74 +55,73 @@ def server(input, output, session):
                 dataset = load_netcdf(input.result_dir(), input.simulation_name(), setup, station)
                 dataset_rates = load_netcdf(input.result_dir(), input.simulation_name(), setup, station, is_rates=True)
                 if dataset is not None:
-                    new_datasets[(setup, station)] = dataset
+                    new_datasets[(setup, station, 'result')] = dataset
                 if dataset_rates is not None:
-                    new_datasets_rates[(setup, station)] = dataset_rates
+                    new_datasets[(setup, station, 'rates')] = dataset_rates
         
         if new_datasets:
             datasets.set(new_datasets)
-            variables = list(next(iter(new_datasets.values())).data_vars)
-            ui.update_select("variable", choices=variables)
+            variables = set()
+            for ds in new_datasets.values():
+                variables.update(ds.data_vars)
+            ui.update_selectize("variables", choices=list(variables))
         else:
             datasets.set({})
-            ui.update_select("variable", choices=[])
-        
-        if new_datasets_rates:
-            datasets_rates.set(new_datasets_rates)
-            variables_rates = list(next(iter(new_datasets_rates.values())).data_vars)
-            ui.update_select("variable_rates", choices=variables_rates)
-        else:
-            datasets_rates.set({})
-            ui.update_select("variable_rates", choices=[])
+            ui.update_selectize("variables", choices=[])
 
     @render.text
     def error_message():
-        if not datasets() and not datasets_rates():
+        if not datasets():
             return f"Error: Unable to load any NetCDF files. Please check the directory, simulation name, setups, and stations."
         return ""
 
-    def plot_data(datasets, var, title):
-        if not datasets:
+    @render.plot
+    @reactive.event(input.variables, input.load_button)
+    def plot_grid():
+        if not datasets() or not input.variables():
             return None
         
-        fig, ax = plt.subplots(figsize=(12, 6))
+        stations = get_list_from_input(input.stations())
+        setups = get_list_from_input(input.setups())
+        variables = input.variables()
         
-        unique_stations = list(set(station for (setup, station) in datasets.keys()))
-        unique_setups = list(set(setup for (setup, station) in datasets.keys()))
+        n_rows = len(variables)
+        n_cols = len(stations)
         
-        color_cycle = cycle(colors)
-        station_colors = {station: next(color_cycle) for station in unique_stations}
+        fig, axes = plt.subplots(n_rows, n_cols, figsize=(5*n_cols, 4*n_rows), squeeze=False)
+        fig.suptitle(f"Simulation: {input.simulation_name()}", fontsize=16)
         
-        line_style_cycle = cycle(line_styles)
-        setup_line_styles = {setup: next(line_style_cycle) for setup in unique_setups}
+        setup_colors = {setup: color for setup, color in zip(setups, colors)}
         
-        for (setup, station), ds in datasets.items():
-            if var in ds:
-                data = ds[var]
-                label = f"{setup} - {station}"
-                color = station_colors[station]
-                linestyle = setup_line_styles[setup]
+        for row, var in enumerate(variables):
+            for col, station in enumerate(stations):
+                ax = axes[row, col]
                 
-                if len(data.dims) == 1:
-                    data.plot(ax=ax, label=label, color=color, linestyle=linestyle)
-                elif len(data.dims) == 2:
-                    data.isel({data.dims[1]: 0}).plot(ax=ax, label=label, color=color, linestyle=linestyle)
-                else:
-                    data.isel({dim: 0 for dim in data.dims[1:]}).plot(ax=ax, label=label, color=color, linestyle=linestyle)
+                for setup in setups:
+                    for data_type in ['result', 'rates']:
+                        if (setup, station, data_type) in datasets():
+                            ds = datasets()[(setup, station, data_type)]
+                            if var in ds:
+                                data = ds[var]
+                                label = f"{setup} ({data_type})"
+                                color = setup_colors[setup]
+                                
+                                if len(data.dims) == 1:
+                                    data.plot(ax=ax, label=label, color=color)
+                                elif len(data.dims) == 2:
+                                    data.isel({data.dims[1]: 0}).plot(ax=ax, label=label, color=color)
+                                else:
+                                    data.isel({dim: 0 for dim in data.dims[1:]}).plot(ax=ax, label=label, color=color)
+                
+                ax.set_title(f"{var} - {station}")
+                ax.legend(fontsize='small')
+                
+                if row == n_rows - 1:
+                    ax.set_xlabel("Time")
+                if col == 0:
+                    ax.set_ylabel(var)
         
-        ax.set_title(title)
-        ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
-        plt.tight_layout()
+        plt.tight_layout(rect=[0, 0.03, 1, 0.95])
         return fig
-
-    @render.plot
-    @reactive.event(input.variable, input.load_button)
-    def plot_output():
-        return plot_data(datasets(), input.variable(), input.variable())
-
-    @render.plot
-    @reactive.event(input.variable_rates, input.load_button)
-    def plot_output_rates():
-        return plot_data(datasets_rates(), input.variable_rates(), f"{input.variable_rates()} (Rates)")
 
 app = App(app_ui, server)
