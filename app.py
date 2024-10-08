@@ -7,7 +7,7 @@ import numpy as np
 import yaml
 import pandas as pd
 import seaborn as sns
-from ratelimit import debounce, throttle
+from ratelimit import debounce
 
 # Function to load the YAML configuration
 def load_yaml_config(yaml_path):
@@ -16,14 +16,6 @@ def load_yaml_config(yaml_path):
             return yaml.safe_load(file)
     except Exception as e:
         print(f"Error loading YAML file: {e}")
-        return None
-    
-# Function to load the Taylor data
-def load_taylor_data(file_path):
-    try:
-        return pd.read_feather(file_path)
-    except Exception as e:
-        print(f"Error loading Taylor data: {e}")
         return None
 
 # Function to load the NetCDF file
@@ -78,7 +70,7 @@ def create_target_diagram(df, add_annotations=False):
     #ax.set_ylim([-3, 3])
     
     # Add title and labels
-    ax.set_title("Target Diagram", fontsize=16)
+    #ax.set_title("Target Diagram", fontsize=16)
     ax.set_xlabel("Normalized cRMSD", fontsize=12)
     ax.set_ylabel("Normalized Bias", fontsize=12)
 
@@ -128,15 +120,20 @@ app_ui = ui.page_fluid(
         ui.navset_tab(
             ui.nav_panel("Simulation",
                 ui.card(
-                    ui.output_plot("plot_grid", height="100%"),
+                    ui.output_plot("plot_grid"),
                     ui.output_text("error_message"),
                     height="calc(100vh - 100px)" # Adjust the 100px value as needed to account for the header
                 ),
             ),
-            ui.nav_panel("Validation"),
+            ui.nav_panel("Validation",
+                ui.card(
+                    ui.output_plot("plot_validation"),
+                    height="calc(100vh - 100px)" # Adjust the 100px value as needed to account for the header
+                )
+            ),
             ui.nav_panel("Taylor Diagram",
                 ui.card(
-                    ui.output_plot("plot_taylor_diagram"),
+                    ui.output_plot("plot_taylor"),
                     height="calc(100vh - 100px)" # Adjust the 100px value as needed to account for the header
                 )
             ),
@@ -165,7 +162,8 @@ def server(input, output, session):
             ui.update_text("simulation_name", value=yaml_config['simulation_name'])
             ui.update_selectize("stations", choices=list(yaml_config['stations'].keys()))
             ui.update_selectize("setups", choices=yaml_config['setups'])
-            ui.update_selectize("yaml_variables", choices=list(yaml_config['variable_mapping'].keys()), selected=list(yaml_config['variable_mapping'].keys()))
+            #ui.update_selectize("yaml_variables", choices=list(yaml_config['variable_mapping'].keys()), selected=list(yaml_config['variable_mapping'].keys()))
+            ui.update_selectize("yaml_variables", choices=list(yaml_config['variable_mapping'].keys()))
         else:
             config.set(None)
 
@@ -274,10 +272,11 @@ def server(input, output, session):
         return fig
     
     @render.plot
-    @reactive.event(input.yaml_variables)
-    def plot_taylor_diagram():
-        if not input.yaml_variables() or not input.setups():
-            return plt.figure()  # Return an empty figure if no variables are selected
+    #@reactive.event(input.yaml_path())
+    def plot_taylor():
+        #if not input.yaml_variables():
+        #    return plt.figure()  # Return an empty figure if no variables are selected
+        yaml_config = load_yaml_config(input.yaml_path())
         try:
             dfs = []
             for i in range(len(input.setups())):
@@ -292,7 +291,7 @@ def server(input, output, session):
             df = pd.concat(dfs)
 
             # Filter the dataframe based on selected variables
-            selected_vars = input.yaml_variables()
+            selected_vars = list(yaml_config['variable_mapping'].keys())
             filtered_df = df[df['variable'].isin(selected_vars)]
         
             # Create the target diagram
@@ -306,5 +305,88 @@ def server(input, output, session):
         except Exception as e:
             print(f"Error creating Taylor diagram: {e}")
             return plt.figure(figsize=(10, 10))  # Return an empty figure
+        
+
+    @render.plot
+    @debounce(0.25)
+    @reactive.event(input.yaml_variables)
+    def plot_validation():
+        if not input.yaml_variables():
+            return plt.figure()
+        try:
+            dfs = []
+            stats_dfs = []
+            for i in range(len(input.setups())):
+                setup = input.setups()[i]
+                df_path = os.path.join(input.result_dir(), input.simulation_name(), setup, "validation_data.arrow")
+                stats_path = os.path.join(input.result_dir(), input.simulation_name(), setup, "validation_monthly_stats.arrow")
+        
+                # Read the feather file
+                df = pd.read_feather(df_path)
+                dfs.append(df)
+                stats_df = pd.read_feather(stats_path)
+                stats_dfs.append(stats_df)
+
+            # Concatenate the dataframes
+            df = pd.concat(dfs)
+            stats_df = pd.concat(stats_dfs)
+
+            # Filter the dataframe based on selected variables
+            selected_vars = input.yaml_variables()
+            filtered_df = df[df['variable'].isin(selected_vars)]
+            filtered_stats_df = stats_df[stats_df['variable'].isin(selected_vars)]
+
+            # read input data
+            stations = input.stations()
+            variables = input.yaml_variables()
+            
+            n_rows = len(variables)
+            n_cols = len(stations)
+            
+            # Dynamic figure size calculation
+            fig_width = min(24, max(12, 5 * n_cols))  # Min 12 inches, max 24 inches, 5 inches per column
+            fig_height = min(100, max(8, 4 * n_rows))  # Min 8 inches, max 36 inches, 4 inches per row
+    
+            fig, axs = plt.subplots(n_rows, n_cols, figsize=(fig_width, fig_height), squeeze=False)
+            
+            for i, var in enumerate(variables):
+                for j, station in enumerate(stations):
+                    station_data = filtered_df[(filtered_df['variable'] == var) & (filtered_df['station'] == station)]
+                    station_stats = filtered_stats_df[(filtered_stats_df['variable'] == var) & (filtered_stats_df['station'] == station)]
+
+                    months = np.arange(1, 13)
+
+                    # Plot individual observations
+                    for month in months:
+                        monthly_data = station_data[station_data['month'] == month]
+                        axs[i,j].scatter([month] * len(monthly_data), monthly_data['obs'], alpha=0.5, color="black", s=20, label=f"{station} Obs.")
+                        #axs[i,j].scatter([month] * len(monthly_data), monthly_data['mod'], alpha=0.5, color=sns.color_palette()[0], s=20)
+
+                    # Plot median and quartiles
+                    #axs[i,j].plot(months, station_stats['obs-median'], color=sns.color_palette()[1], label=f"{station} Obs. Median", linewidth=3)
+                    #axs[i,j].plot(months, station_stats['obs-q25'], color=sns.color_palette()[1], linestyle=':', linewidth=1)
+                    #axs[i,j].plot(months, station_stats['obs-q75'], color=sns.color_palette()[1], linestyle=':', linewidth=1)
+
+                    axs[i,j].plot(months, station_stats['mod-median'], color=sns.color_palette()[0], label=f"{station} Mod. Median", linewidth=3)
+                    axs[i,j].plot(months, station_stats['mod-q25'], color=sns.color_palette()[0], linestyle=':', linewidth=1)
+                    axs[i,j].plot(months, station_stats['mod-q75'], color=sns.color_palette()[0], linestyle=':', linewidth=1)
+
+                    #axs[i,j].set_title(f"{var} Monthly Statistics", fontsize=14)
+                    axs[i,j].set_title("")
+                    axs[i,j].legend()
+                    axs[i,j].set_xlabel('Month', fontsize=12)
+                    axs[i,j].set_ylabel(var, fontsize=12)
+                    axs[i,j].set_xticks(months)
+                    axs[i,j].set_xticklabels(['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'])
+                    axs[i,j].set_xlim(0.5, 12.5)
+
+        except FileNotFoundError:
+            print(f"File not found: {df_path} or {stats_path}")
+            return plt.figure(figsize=(10, 10)) # Return an empty figure
+        except Exception as e:
+            print(f"Error creating validation plots: {e}")
+            return plt.figure(figsize=(10, 10))
+        
+        return fig
 
 app = App(app_ui, server)
