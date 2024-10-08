@@ -17,3 +17,34 @@
   padding: 20px;
   margin-bottom: 20px;
 }
+
+.footer {
+  position: fixed;
+  left: 0;
+  bottom: 0;
+  width: 100%;
+  background-color: #f8f9fa;
+  color: #6c757d;
+  text-align: center;
+  padding: 10px 0;
+  font-size: 14px;
+  border-top: 1px solid #dee2e6;
+}
+
+.footer-content {
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+/* Adjust main content to accommodate footer */
+.bslib-sidebar-layout {
+  padding-bottom: 50px; /* Adjust this value based on your footer's height */
+}
+
+/* Make footer responsive to different screen sizes */
+@media (max-width: 768px) {
+  .footer {
+      font-size: 12px;
+      padding: 8px 0;
+  }
+}
