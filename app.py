@@ -339,6 +339,7 @@ def server(input, output, session):
             # read input data
             stations = input.stations()
             variables = input.yaml_variables()
+            setup = input.setups()
             
             n_rows = len(variables)
             n_cols = len(stations)
@@ -351,34 +352,36 @@ def server(input, output, session):
             
             for i, var in enumerate(variables):
                 for j, station in enumerate(stations):
-                    station_data = filtered_df[(filtered_df['variable'] == var) & (filtered_df['station'] == station)]
-                    station_stats = filtered_stats_df[(filtered_stats_df['variable'] == var) & (filtered_stats_df['station'] == station)]
+                    for k, setup_name in enumerate(np.unique(filtered_df['setup'])):
+                        station_data = filtered_df[(filtered_df['variable'] == var) & (filtered_df['station'] == station) & (filtered_df['setup'] == setup_name)]
+                        station_stats = filtered_stats_df[(filtered_stats_df['variable'] == var) & (filtered_stats_df['station'] == station) & (filtered_stats_df['setup'] == setup_name)]
 
-                    months = np.arange(1, 13)
+                        months = np.arange(1, 13)
 
-                    # Plot individual observations
-                    for month in months:
-                        monthly_data = station_data[station_data['month'] == month]
-                        axs[i,j].scatter([month] * len(monthly_data), monthly_data['obs'], alpha=0.5, color="black", s=20, label=f"{station} Obs.")
-                        #axs[i,j].scatter([month] * len(monthly_data), monthly_data['mod'], alpha=0.5, color=sns.color_palette()[0], s=20)
+                        # Choose a different color for each setup
+                        setup_color = sns.color_palette()[k]
 
-                    # Plot median and quartiles
-                    #axs[i,j].plot(months, station_stats['obs-median'], color=sns.color_palette()[1], label=f"{station} Obs. Median", linewidth=3)
-                    #axs[i,j].plot(months, station_stats['obs-q25'], color=sns.color_palette()[1], linestyle=':', linewidth=1)
-                    #axs[i,j].plot(months, station_stats['obs-q75'], color=sns.color_palette()[1], linestyle=':', linewidth=1)
+                        # Plot individual observations
+                        for month in months:
+                            monthly_data = station_data[station_data['month'] == month]
+                            axs[i,j].scatter([month] * len(monthly_data), monthly_data['obs'], alpha=0.5, color="black", s=10)
 
-                    axs[i,j].plot(months, station_stats['mod-median'], color=sns.color_palette()[0], label=f"{station} Mod. Median", linewidth=3)
-                    axs[i,j].plot(months, station_stats['mod-q25'], color=sns.color_palette()[0], linestyle=':', linewidth=1)
-                    axs[i,j].plot(months, station_stats['mod-q75'], color=sns.color_palette()[0], linestyle=':', linewidth=1)
+                        # Add the median model values
+                        axs[i,j].plot(months, station_stats['mod-median'], color=setup_color, label=f"{setup_name} - {station} Mod. Median", linewidth=2)
 
-                    #axs[i,j].set_title(f"{var} Monthly Statistics", fontsize=14)
-                    axs[i,j].set_title("")
-                    axs[i,j].legend()
-                    axs[i,j].set_xlabel('Month', fontsize=12)
-                    axs[i,j].set_ylabel(var, fontsize=12)
-                    axs[i,j].set_xticks(months)
-                    axs[i,j].set_xticklabels(['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'])
-                    axs[i,j].set_xlim(0.5, 12.5)
+                        # Add error bars
+                        axs[i,j].errorbar(months, station_stats['mod-median'], 
+                                    yerr=[station_stats['mod-median'] - station_stats['mod-q25'], 
+                                          station_stats['mod-q75'] - station_stats['mod-median']],
+                                    fmt='none', color=setup_color, ecolor=setup_color, capsize=5, alpha=1, elinewidth=2, capthick=2)
+
+                        axs[i,j].set_title("")
+                        axs[i,j].legend()
+                        axs[i,j].set_xlabel('Month', fontsize=12)
+                        axs[i,j].set_ylabel(var, fontsize=12)
+                        axs[i,j].set_xticks(months)
+                        axs[i,j].set_xticklabels(['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'])
+                        axs[i,j].set_xlim(0.5, 12.5)
 
         except FileNotFoundError:
             print(f"File not found: {df_path} or {stats_path}")

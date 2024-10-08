@@ -3,3 +3,6 @@ xarray
 matplotlib
 netCDF4
 numpy
+pandas
+seaborn
+yaml
