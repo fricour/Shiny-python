@@ -7,6 +7,7 @@ import numpy as np
 import yaml
 import pandas as pd
 import seaborn as sns
+from ratelimit import debounce, throttle
 
 # Function to load the YAML configuration
 def load_yaml_config(yaml_path):
@@ -118,13 +119,15 @@ app_ui = ui.page_fluid(
             ui.input_action_button("load_button", "Load NetCDF data"),
             ui.input_selectize("variables", "All Variables", choices=[], multiple=True),
             ui.tags.h3("Validation"),            
-            ui.input_selectize("yaml_variables", "Variables from YAML", choices=[], multiple=True),
-
+            ui.input_selectize("yaml_variables", "Variables from YAML", choices=[], multiple=True)
         ),
         ui.navset_tab(
             ui.nav_panel("Simulation",
-                ui.output_plot("plot_grid"),
-                ui.output_text("error_message")
+                ui.card(
+                    ui.output_plot("plot_grid", height="100%"),
+                    ui.output_text("error_message"),
+                    height="calc(100vh - 100px)" # Adjust the 100px value as needed to account for the header
+                ),
             ),
             ui.nav_panel("Validation",
                 ui.output_plot("global_taylor_diagram")
@@ -162,49 +165,56 @@ def server(input, output, session):
     @reactive.Effect
     @reactive.event(input.load_button)
     def load_data():
-        nonlocal datasets
-        new_datasets = {}
-        stations = input.stations()
-        setups = input.setups()
+        try:
+            new_datasets = {}
+            stations = input.stations()
+            setups = input.setups()
         
-        # Show loading notification
-        with ui.Progress(min=0, max=len(stations) * len(setups)) as p:
-            p.set(message="Loading NetCDF files", detail="Please wait...")
+            # Show loading notification
+            with ui.Progress(min=0, max=len(stations) * len(setups)) as p:
+                p.set(message="Loading NetCDF files", detail="Please wait...")
             
-            for i, setup in enumerate(setups):
-                for j, station in enumerate(stations):
-                    dataset = load_netcdf(input.result_dir(), input.simulation_name(), setup, station)
-                    dataset_rates = load_netcdf(input.result_dir(), input.simulation_name(), setup, station, is_rates=True)
-                    if dataset is not None:
-                        new_datasets[(setup, station, 'result')] = dataset
-                    if dataset_rates is not None:
-                        new_datasets[(setup, station, 'rates')] = dataset_rates
+                for i, setup in enumerate(setups):
+                    for j, station in enumerate(stations):
+                        try:
+                            dataset = load_netcdf(input.result_dir(), input.simulation_name(), setup, station)
+                            dataset_rates = load_netcdf(input.result_dir(), input.simulation_name(), setup, station, is_rates=True)
+                            if dataset is not None:
+                                new_datasets[(setup, station, 'result')] = dataset
+                            if dataset_rates is not None:
+                                new_datasets[(setup, station, 'rates')] = dataset_rates
+                        except Exception as e:
+                            print(f"Error loading data for setup {setup}, station {station}: {str(e)}")
                     
-                    # Update progress
-                    p.set(value=i * len(stations) + j + 1)
+                        # Update progress
+                        p.set(value=i * len(stations) + j + 1)
         
-        if new_datasets:
-            datasets.set(new_datasets)
-            variables = set()
-            for ds in new_datasets.values():
-                variables.update(ds.data_vars)
-            ui.update_selectize("variables", choices=list(variables))
-        else:
-            datasets.set({})
-            ui.update_selectize("variables", choices=[])
+            if new_datasets:
+                datasets.set(new_datasets)
+                variables = set()
+                for ds in new_datasets.values():
+                    variables.update(ds.data_vars)
+                ui.update_selectize("variables", choices=list(variables))
+            else:
+                datasets.set({})
+                ui.update_selectize("variables", choices=[])
+        except Exception as e:
+            print(f"Error in load_data: {str(e)}")
+            ui.notification_show(f"Error loading data: {str(e)}", type="error")
 
     @render.text
-    def error_message():
+    def error_message(): 
         if not datasets():
             return f"Error: Unable to load any NetCDF files. Please check the directory, simulation name, setups, and stations."
         return ""
 
     @render.plot
-    @reactive.event(input.variables, input.yaml_variables, input.load_button)
+    @debounce(1) # Debounce the plot generation to avoid multiple calls
+    @reactive.event(input.variables, input.load_button)
     def plot_grid():
-        if not datasets() or (not input.variables() and not input.yaml_variables()):
+        if not datasets() or (not input.variables()):
             return None
-        
+
         # Show loading notification for plot generation
         stations = input.stations()
         setups = input.setups()
@@ -218,7 +228,6 @@ def server(input, output, session):
         fig_height = min(100, max(8, 4 * n_rows))  # Min 8 inches, max 36 inches, 4 inches per row
     
         fig, axes = plt.subplots(n_rows, n_cols, figsize=(fig_width, fig_height), squeeze=False)
-        #fig.suptitle(f"Simulation: {input.simulation_name()}", fontsize=16)
             
         setup_colors = {setup: color for setup, color in zip(setups, colors)}
             
@@ -233,7 +242,7 @@ def server(input, output, session):
                             ds = datasets()[(setup, station, data_type)]
                             if var in ds:
                                 data = ds[var]
-                                label = f"{setup} ({data_type})"
+                                label = f"{station} {setup} ({data_type})"
                                 color = setup_colors[setup]
                                     
                                 if len(data.dims) == 1:
@@ -243,13 +252,10 @@ def server(input, output, session):
                                 else:
                                     data.isel({dim: 0 for dim in data.dims[1:]}).plot(ax=ax, label=label, color=color)
                     
-                #ax.set_title(f"{var} - {station}")
-                ax.set_title(f"Station {station}")
+                ax.set_title("")
                 ax.legend(fontsize='small')
                 ax.set_xlabel("Time")
                 ax.set_ylabel(var)
-            
-        #plt.tight_layout(rect=[0, 0.03, 1, 0.95])
             
         return fig
     
