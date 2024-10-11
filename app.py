@@ -245,6 +245,12 @@ def server(input, output, session):
         setup_colors = {setup: color for setup, color in zip(setups, colors)}
             
         for row, var in enumerate(variables):
+            
+            #  -- TOO : Enhance this - YLIM
+            ymins=[]
+            ymaxs=[]
+            #  -- 
+            
             for col, station in enumerate(stations):
                 ax = axes[row, col]
                     
@@ -268,7 +274,18 @@ def server(input, output, session):
                 ax.legend(fontsize='small')
                 ax.set_xlabel("Time")
                 ax.set_ylabel(var)
+
+            #  -- TOO : Enhance this - YLIM
+                ymin,ymax = ax.get_ylim()
+                ymins.append(ymin)
+                ymaxs.append(ymax)
             
+            for col, station in enumerate(stations):
+                ax = axes[row, col]
+                print('TTT')
+                ax.set_ylim(np.asarray(ymins).min(), np.asarray(ymaxs).max())
+            #  -- 
+
         return fig
     
     @render.plot
