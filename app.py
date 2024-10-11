@@ -361,16 +361,19 @@ def server(input, output, session):
                         # Choose a different color for each setup
                         setup_color = sns.color_palette()[k]
 
-                        # Prepare data for boxplot
-                        boxplot_data = [station_data[station_data['month'] == month]['obs'] for month in months]
-
-                        # Plot boxplots for observations
-                        axs[i,j].boxplot(boxplot_data, positions=months, widths=0.6, patch_artist=True)
-                    
-               
-
-                        # Plot individual observations
+                        # Plot individual observations and boxplot
                         for month in months:
+                            # add boxplot
+                            bp = station_data.boxplot(column='obs', by='month', ax=axs[i,j],
+                                                grid = False,
+                                                notch=False, # rectangle boxplot if False
+                                                showfliers=False, # no outliers, we already plot the observations
+                                                medianprops={"color": "black", "linewidth": 2},
+                                                showcaps=False, # no caps
+                                                boxprops={"color": "black", "linewidth": 2},
+                                                whiskerprops={"color": "black", "linewidth": 0}
+                                                )
+                            # add individual observations
                             monthly_data = station_data[station_data['month'] == month]
                             axs[i,j].scatter([month] * len(monthly_data), monthly_data['obs'], alpha=0.5, color="black", s=10)
 
