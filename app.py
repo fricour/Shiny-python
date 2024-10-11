@@ -131,9 +131,9 @@ app_ui = ui.page_fluid(
                     height="calc(100vh - 100px)" # Adjust the 100px value as needed to account for the header
                 )
             ),
-            ui.nav_panel("Taylor Diagram",
+            ui.nav_panel("Target Diagram",
                 ui.card(
-                    ui.output_plot("plot_taylor"),
+                    ui.output_plot("plot_target"),
                     height="calc(100vh - 100px)" # Adjust the 100px value as needed to account for the header
                 )
             ),
@@ -273,7 +273,7 @@ def server(input, output, session):
     
     @render.plot
     #@reactive.event(input.yaml_path())
-    def plot_taylor():
+    def plot_target():
         #if not input.yaml_variables():
         #    return plt.figure()  # Return an empty figure if no variables are selected
         yaml_config = load_yaml_config(input.yaml_path())
@@ -360,6 +360,14 @@ def server(input, output, session):
 
                         # Choose a different color for each setup
                         setup_color = sns.color_palette()[k]
+
+                        # Prepare data for boxplot
+                        boxplot_data = [station_data[station_data['month'] == month]['obs'] for month in months]
+
+                        # Plot boxplots for observations
+                        axs[i,j].boxplot(boxplot_data, positions=months, widths=0.6, patch_artist=True)
+                    
+               
 
                         # Plot individual observations
                         for month in months:
