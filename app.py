@@ -367,15 +367,15 @@ def server(input, output, session):
                             bp = station_data.boxplot(column='obs', by='month', ax=axs[i,j],
                                                 grid = False,
                                                 notch=False, # rectangle boxplot if False
-                                                showfliers=False, # no outliers, we already plot the observations
+                                                showfliers=True, # no outliers, we already plot the observations
                                                 medianprops={"color": "black", "linewidth": 2},
                                                 showcaps=False, # no caps
                                                 boxprops={"color": "black", "linewidth": 2},
                                                 whiskerprops={"color": "black", "linewidth": 0}
                                                 )
                             # add individual observations
-                            monthly_data = station_data[station_data['month'] == month]
-                            axs[i,j].scatter([month] * len(monthly_data), monthly_data['obs'], alpha=0.5, color="black", s=10)
+                            #monthly_data = station_data[station_data['month'] == month]
+                            #axs[i,j].scatter([month] * len(monthly_data), monthly_data['obs'], alpha=0.5, color="black", s=10)
 
                         # Add the median model values
                         axs[i,j].plot(months, station_stats['mod-median'], color=setup_color, label=f"{setup_name} - {station} Mod. Median", linewidth=2)
