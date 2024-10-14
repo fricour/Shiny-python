@@ -107,6 +107,7 @@ app_ui = ui.page_fluid(
         ui.sidebar(
             ui.tags.h3("Simulation", style="font-weight: bold;"),
             ui.input_text("yaml_path", "Path to simulation.yaml", "/home/fricour/bcz1d/experiment/simulation_CHL.yaml"),
+            #ui.input_text("yaml_path", "Path to simulation.yaml", "/home/fricour/bcz1d/experiment/test.yaml"),
             #ui.input_text("yaml_path", "Path to simulation.yaml", "/home/arthur/Desktop/DOCS/PROJECTS/bcz1d_DEV/bcz1d/experiment/simulation_CHL.yaml"),
             ui.input_action_button("load_yaml", "Load YAML Configuration"),
             ui.output_text("yaml_load_status"),
