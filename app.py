@@ -265,7 +265,10 @@ def server(input, output, session):
                         if (setup, station, data_type) in datasets():
                             ds = datasets()[(setup, station, data_type)]
                             if var in ds:
+                                #print(ds)
                                 data = ds[var]
+                                var_long_name = data.attrs.get('long_name')
+                                #print(var_long_name)
                                 label = f"{setup}"
                                 color = setup_colors[setup]
                                 if len(data.dims) == 1:
@@ -289,7 +292,7 @@ def server(input, output, session):
                 if col != 0 :
                     ax.set_yticklabels([])
                 # TODO : Use long name here
-                ax.set_ylabel(var if col==0 else "" )
+                ax.set_ylabel(var_long_name if col==0 else "" )
                 ax.grid()
 
                 if (row==0) and (col==0):
