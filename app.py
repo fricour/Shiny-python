@@ -104,7 +104,8 @@ app_ui = ui.page_fluid(
     ui.layout_sidebar(
         ui.sidebar(
             ui.tags.h3("Simulation", style="font-weight: bold;"),
-            ui.input_text("yaml_path", "Path to simulation.yaml", "/home/fricour/bcz1d/experiment/simulation.yaml"),
+            ui.input_text("yaml_path", "Path to simulation.yaml", "/home/fricour/bcz1d/experiment/simulation_CHL.yaml"),
+            #ui.input_text("yaml_path", "Path to simulation.yaml", "/home/arthur/Desktop/DOCS/PROJECTS/bcz1d_DEV/bcz1d/experiment/simulation_CHL.yaml"),
             ui.input_action_button("load_yaml", "Load YAML Configuration"),
             ui.output_text("yaml_load_status"),
             ui.input_text("result_dir", "Result directory"),
@@ -245,6 +246,9 @@ def server(input, output, session):
         setup_colors = {setup: color for setup, color in zip(setups, colors)}
             
         for row, var in enumerate(variables):
+            
+            ymins, ymaxs = [], []
+            
             for col, station in enumerate(stations):
                 ax = axes[row, col]
                     
@@ -254,9 +258,8 @@ def server(input, output, session):
                             ds = datasets()[(setup, station, data_type)]
                             if var in ds:
                                 data = ds[var]
-                                label = f"{station} {setup} ({data_type})"
+                                label = f"{setup}"
                                 color = setup_colors[setup]
-                                    
                                 if len(data.dims) == 1:
                                     data.plot(ax=ax, label=label, color=color)
                                 elif len(data.dims) == 2:
@@ -264,18 +267,38 @@ def server(input, output, session):
                                 else:
                                     data.isel({dim: 0 for dim in data.dims[1:]}).plot(ax=ax, label=label, color=color)
                     
-                ax.set_title("")
-                ax.legend(fontsize='small')
-                ax.set_xlabel("Time")
-                ax.set_ylabel(var)
+
+                ax.set_title(f"{station}" if row==0 else "" )
+                if row != (len(variables) - 1):
+                # Remove x-axis ticks and labels for all rows except the last
+                    ax.tick_params(axis='x', which='both', bottom=False, top=False, labelbottom=False)
+                    ax.set_xlabel('')
+                else: # keep this else statement for later if needed
+                    # For the last row, set only 4 month ticks
+                    #ax.set_xticks([pd.Timestamp(f"2020-{month:02d}-01") for month in [1, 4, 7, 10]]) # without this, it is not working
+                    #ax.set_xticklabels(['Jan', 'Apr', 'Jul', 'Oct'])
+                    ax.set_xlabel("Month")
+                if col != 0 :
+                    ax.set_yticklabels([])
+                # TODO : Use long name here
+                ax.set_ylabel(var if col==0 else "" )
+                ax.grid()
+
+                if (row==0) and (col==0):
+                    ax.legend(fontsize='small')
+
+                ymin,ymax = ax.get_ylim()
+                ymins.append(ymin)
+                ymaxs.append(ymax)
             
+            for col, station in enumerate(stations):
+                ax = axes[row, col]
+                ax.set_ylim(np.asarray(ymins).min(), np.asarray(ymaxs).max())
+
         return fig
     
     @render.plot
-    #@reactive.event(input.yaml_path())
     def plot_target():
-        #if not input.yaml_variables():
-        #    return plt.figure()  # Return an empty figure if no variables are selected
         yaml_config = load_yaml_config(input.yaml_path())
         try:
             dfs = []
@@ -308,7 +331,7 @@ def server(input, output, session):
         
 
     @render.plot
-    @debounce(0.25)
+    @debounce(0.1)
     @reactive.event(input.yaml_variables)
     def plot_validation():
         if not input.yaml_variables():
@@ -339,7 +362,7 @@ def server(input, output, session):
             # read input data
             stations = input.stations()
             variables = input.yaml_variables()
-            setup = input.setups()
+            setups = input.setups()
             
             n_rows = len(variables)
             n_cols = len(stations)
@@ -348,51 +371,83 @@ def server(input, output, session):
             fig_width = min(24, max(12, 5 * n_cols))  # Min 12 inches, max 24 inches, 5 inches per column
             fig_height = min(100, max(8, 4 * n_rows))  # Min 8 inches, max 36 inches, 4 inches per row
     
-            fig, axs = plt.subplots(n_rows, n_cols, figsize=(fig_width, fig_height), squeeze=False)
+            fig, axes = plt.subplots(n_rows, n_cols, figsize=(fig_width, fig_height), squeeze=False)
             
-            for i, var in enumerate(variables):
-                for j, station in enumerate(stations):
+            setup_colors = {setup: color for setup, color in zip(setups, colors)}
+            
+            for row, var in enumerate(variables): 
+                ymins, ymaxs = [], []
+                for col, station in enumerate(stations): 
+                    ax = axes[row, col]
                     for k, setup_name in enumerate(np.unique(filtered_df['setup'])):
-                        station_data = filtered_df[(filtered_df['variable'] == var) & (filtered_df['station'] == station) & (filtered_df['setup'] == setup_name)]
+                        #station_data = filtered_df[(filtered_df['variable'] == var) & (filtered_df['station'] == station) & (filtered_df['setup'] == setup_name)]
                         station_stats = filtered_stats_df[(filtered_stats_df['variable'] == var) & (filtered_stats_df['station'] == station) & (filtered_stats_df['setup'] == setup_name)]
 
                         months = np.arange(1, 13)
 
                         # Choose a different color for each setup
-                        setup_color = sns.color_palette()[k]
+                        #setup_color = sns.color_palette()[k]
 
                         # Plot individual observations and boxplot
-                        for month in months:
-                            # add boxplot
-                            bp = station_data.boxplot(column='obs', by='month', ax=axs[i,j],
-                                                grid = False,
-                                                notch=False, # rectangle boxplot if False
-                                                showfliers=True, # no outliers, we already plot the observations
-                                                medianprops={"color": "black", "linewidth": 2},
-                                                showcaps=False, # no caps
-                                                boxprops={"color": "black", "linewidth": 2},
-                                                whiskerprops={"color": "black", "linewidth": 0}
-                                                )
+                        #for month in months:
+                        #    # add boxplot
+                        #    bp = station_data.boxplot(column='obs', by='month', ax=axs[i,j],
+                        #                        grid = False,
+                        #                        notch=False, # rectangle boxplot if False
+                        #                        showfliers=True, # no outliers, we already plot the observations
+                        #                        medianprops={"color": "black", "linewidth": 2},
+                        #                        showcaps=False, # no caps
+                        #                        boxprops={"color": "black", "linewidth": 2},
+                        #                        whiskerprops={"color": "black", "linewidth": 0}
+                        #                        )
                             # add individual observations
-                            #monthly_data = station_data[station_data['month'] == month]
-                            #axs[i,j].scatter([month] * len(monthly_data), monthly_data['obs'], alpha=0.5, color="black", s=10)
+                        #    monthly_data = station_data[station_data['month'] == month]
+                        #    axs[i,j].scatter([month] * len(monthly_data), monthly_data['obs'], alpha=0.5, color="black", s=10)
+
+                        # Add the median observation values (only one black line in legend)
+                        if k == 0:
+                            ax.plot(months, station_stats['obs-median'], color='black', label=f"Observations", linewidth=2)
+                        else:
+                            ax.plot(months, station_stats['obs-median'], color='black', linewidth=2)
+                        
+                        # Add error bars
+                        ax.errorbar(months, station_stats['obs-median'], 
+                                    yerr=[station_stats['obs-median'] - station_stats['obs-q25'], 
+                                          station_stats['obs-q75'] - station_stats['obs-median']],
+                                    fmt='none', color='black', ecolor='black', capsize=5, alpha=1, elinewidth=2, capthick=2)
 
                         # Add the median model values
-                        axs[i,j].plot(months, station_stats['mod-median'], color=setup_color, label=f"{setup_name} - {station} Mod. Median", linewidth=2)
+                        ax.plot(months, station_stats['mod-median'], color=setup_colors[setup_name], label=f"{setup_name}", linewidth=2)
 
                         # Add error bars
-                        axs[i,j].errorbar(months, station_stats['mod-median'], 
+                        ax.errorbar(months, station_stats['mod-median'], 
                                     yerr=[station_stats['mod-median'] - station_stats['mod-q25'], 
                                           station_stats['mod-q75'] - station_stats['mod-median']],
-                                    fmt='none', color=setup_color, ecolor=setup_color, capsize=5, alpha=1, elinewidth=2, capthick=2)
+                                    fmt='none', color=setup_colors[setup_name], ecolor=setup_colors[setup_name], capsize=5, alpha=1, elinewidth=2, capthick=2)
 
-                        axs[i,j].set_title("")
-                        axs[i,j].legend()
-                        axs[i,j].set_xlabel('Month', fontsize=12)
-                        axs[i,j].set_ylabel(var, fontsize=12)
-                        axs[i,j].set_xticks(months)
-                        axs[i,j].set_xticklabels(['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'])
-                        axs[i,j].set_xlim(0.5, 12.5)
+                        ax.set_title(f"{station}" if row==0 else "" )
+                        if row != (len(variables)-1):
+                            ax.tick_params(axis='x',labelbottom='off')
+                            ax.set_xticklabels([''])
+                        else:
+                            # Add month labels for every three months
+                            ax.set_xticks([1, 4, 7, 10])
+                            ax.set_xticklabels(['Jan', 'Apr', 'Jul', 'Oct'])
+                            ax.set_xlabel("Month")
+                        if col != 0: 
+                            ax.set_yticklabels([])
+                        ax.set_ylabel(var if col==0 else "" )
+                        ax.grid(True)
+
+                        if (row==0) and (col==0):
+                            ax.legend(fontsize='small')
+
+                        ymin,ymax = ax.get_ylim()
+                        ymins.append(ymin)
+                        ymaxs.append(ymax)
+            
+                for col, station in enumerate(stations):
+                    ax.set_ylim(np.asarray(ymins).min(), np.asarray(ymaxs).max())
 
         except FileNotFoundError:
             print(f"File not found: {df_path} or {stats_path}")
