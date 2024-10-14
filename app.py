@@ -8,6 +8,8 @@ import yaml
 import pandas as pd
 import seaborn as sns
 from ratelimit import debounce
+from ipyleaflet import Map, Marker, Popup, AwesomeIcon
+from shinywidgets import output_widget, render_widget
 
 # Function to load the YAML configuration
 def load_yaml_config(yaml_path):
@@ -135,6 +137,12 @@ app_ui = ui.page_fluid(
             ui.nav_panel("Target Diagram",
                 ui.card(
                     ui.output_plot("plot_target"),
+                    height="calc(100vh - 100px)" # Adjust the 100px value as needed to account for the header
+                )
+            ),
+            ui.nav_panel("Map",
+                ui.card(
+                    output_widget("map"),
                     height="calc(100vh - 100px)" # Adjust the 100px value as needed to account for the header
                 )
             ),
@@ -457,5 +465,33 @@ def server(input, output, session):
             return plt.figure(figsize=(10, 10))
         
         return fig
+    
+    @output
+    @render_widget
+    def map():
+
+        # create fun icon
+        custom_icon = AwesomeIcon(
+                name='life-ring',
+                marker_color='white',
+                icon_color='red',
+                spin=True
+            )
+
+        map = Map(center=(52, 3), zoom=7)
+        stations = input.stations()
+        for station in stations:
+
+            # station position
+            station_pos = (config()['stations'][station]['lat'], config()['stations'][station]['lon'])
+            
+            # add marker
+            point = Marker(location=station_pos,
+                           radius=5,
+                           icon=custom_icon,
+                           draggable=False)
+            
+            map.add_layer(point)
+        return map
 
 app = App(app_ui, server)
