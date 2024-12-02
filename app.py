@@ -106,9 +106,9 @@ app_ui = ui.page_fluid(
     ui.layout_sidebar(
         ui.sidebar(
             ui.tags.h3("Simulation", style="font-weight: bold;"),
-            ui.input_text("yaml_path", "Path to simulation.yaml", "/home/fricour/bcz1d/experiment/simulation_CHL.yaml"),
+            #ui.input_text("yaml_path", "Path to simulation.yaml", "/home/fricour/bcz1d/experiment/simulation_CHL.yaml"),
             #ui.input_text("yaml_path", "Path to simulation.yaml", "/home/fricour/bcz1d/experiment/test.yaml"),
-            #ui.input_text("yaml_path", "Path to simulation.yaml", "/home/arthur/Desktop/DOCS/PROJECTS/bcz1d_DEV/bcz1d/experiment/simulation_CHL.yaml"),
+            ui.input_text("yaml_path", "Path to simulation.yaml", "/home/arthur/Desktop/DOCS/PROJECTS/bcz1d_DEV/bcz1d/experiment/simulation_CHL_GE.yaml"),
             ui.input_action_button("load_yaml", "Load YAML Configuration"),
             ui.output_text("yaml_load_status"),
             ui.input_text("result_dir", "Result directory"),
@@ -122,10 +122,17 @@ app_ui = ui.page_fluid(
             ui.input_selectize("yaml_variables", "Variables from YAML", choices=[], multiple=True)
         ),
         ui.navset_tab(
-            ui.nav_panel("Simulation",
+            ui.nav_panel("Time Series",
                 ui.card(
                     ui.output_plot("plot_grid"),
                     ui.output_text("error_message"),
+                    height="calc(100vh - 100px)" # Adjust the 100px value as needed to account for the header
+                ),
+            ),
+            ui.nav_panel("Vert Profiles",
+                ui.card(
+                    ui.output_plot("plot_vert"),
+                    ui.output_text("error_message_vert"),
                     height="calc(100vh - 100px)" # Adjust the 100px value as needed to account for the header
                 ),
             ),
@@ -248,7 +255,7 @@ def server(input, output, session):
             
         # Dynamic figure size calculation
         fig_width = min(24, max(12, 5 * n_cols))  # Min 12 inches, max 24 inches, 5 inches per column
-        fig_height = min(100, max(8, 4 * n_rows))  # Min 8 inches, max 36 inches, 4 inches per row
+        fig_height = min(100, max(8, 6 * n_rows))  # Min 8 inches, max 36 inches, 4 inches per row
     
         fig, axes = plt.subplots(n_rows, n_cols, figsize=(fig_width, fig_height), squeeze=False)
             
@@ -266,19 +273,22 @@ def server(input, output, session):
                             ds = datasets()[(setup, station, data_type)]
                             if var in ds:
                                 #print(ds)
-                                data = ds[var]
+                                data = ds[var].squeeze() # !! Without the squeeze, data retain a lon and lat dimension, so ndims ==4, and only the later case below applies. 
                                 var_long_name = data.attrs.get('long_name')
                                 #print(var_long_name)
                                 label = f"{setup}"
                                 color = setup_colors[setup]
-                                if len(data.dims) == 1:
+                                if len(data.dims) == 1: # -> Assumed : The only dimension is time. 
                                     data.plot(ax=ax, label=label, color=color)
-                                elif len(data.dims) == 2:
-                                    data.isel({data.dims[1]: 0}).plot(ax=ax, label=label, color=color)
-                                else:
+                                elif len(data.dims) == 2: # -> Assumed : The two dimensions are time and depth.
+                                    # TODO : include a controller to choose between surface, bottom, or vertical average values.
+                                    # TODO :  ... at somoe point, vertical integral can also be an option (! consider dz, maybe dynamically)
+                                    # TODO :  ... it could be relevant, to have this choice specifically available for all variables .. 
+                                    # data.isel({data.dims[1]: 0}).plot(ax=ax, label=label, color=color)
+                                    data.mean(data.dims[1]).plot(ax=ax, label=label, color=color)
+                                else:  # -> I don't know when this case i supposed to apply,...
                                     data.isel({dim: 0 for dim in data.dims[1:]}).plot(ax=ax, label=label, color=color)
                     
-
                 ax.set_title(f"{station}" if row==0 else "" )
                 if row != (len(variables) - 1):
                 # Remove x-axis ticks and labels for all rows except the last
@@ -291,8 +301,9 @@ def server(input, output, session):
                     ax.set_xlabel("Month")
                 if col != 0 :
                     ax.set_yticklabels([])
-                # TODO : Use long name here
-                ax.set_ylabel(var_long_name if col==0 else "" )
+                # Long name to be used only if there's enough room    
+#                ax.set_ylabel(var_long_name if col==0 else "" )
+                ax.set_ylabel('%s \n [%s]'%(var,data.attrs.get('units') ) if col==0 else "" )
                 ax.grid()
 
                 if (row==0) and (col==0):
@@ -307,6 +318,75 @@ def server(input, output, session):
                 ax.set_ylim(np.asarray(ymins).min(), np.asarray(ymaxs).max())
 
         return fig
+
+
+    @render.text
+    def error_message_vert(): 
+        if not datasets():
+            return f"Error: Unable to load any NetCDF files. Please check the directory, simulation name, setups, and stations."
+        return ""
+
+
+    @render.plot
+    @debounce(1) # Debounce (1 second) the plot generation to avoid multiple calls (when selecting the input variables)
+    @reactive.event(input.variables, input.load_button)
+    def plot_vert():
+        if not datasets() or (not input.variables()):
+            return None
+
+        # Show loading notification for plot generation
+        stations = input.stations()
+        setups = input.setups()
+        variables = input.variables()
+            
+        n_rows = len(variables)
+        n_cols = len(stations)
+            
+        # Dynamic figure size calculation
+        fig_width = min(24, max(12, 5 * n_cols))  # Min 12 inches, max 24 inches, 5 inches per column
+        fig_height = min(100, max(8, 6 * n_rows))  # Min 8 inches, max 36 inches, 4 inches per row
+    
+        fig, axes = plt.subplots(n_rows, n_cols, figsize=(fig_width, fig_height), squeeze=False)
+            
+        setup_colors = {setup: color for setup, color in zip(setups, colors)}
+            
+        for row, var in enumerate(variables):
+            
+            ymins, ymaxs = [], []            
+            for col, station in enumerate(stations):
+                ax = axes[row, col]
+                    
+                # Showing only the first setup
+                for setup in [setups[0]]: 
+                    for data_type in ['result', 'rates']:
+                        if (setup, station, data_type) in datasets():
+                            ds = datasets()[(setup, station, data_type)]
+                            if var in ds:
+                                data = ds[var].squeeze() # !! Without the squeeze, data retain a lon and lat dimension, so ndims ==4, and only the later case below applies. 
+                                var_long_name = data.attrs.get('long_name')
+                                label = f"{setup} "
+                                color = setup_colors[setup]
+                                if len(data.dims) == 1: # -> Assumed : The only dimension is time. 
+                                    data.plot(ax=ax, label=label, color=color)
+                                elif len(data.dims) == 2: # -> Assumed : The two dimensions are time and depth.
+                                    data.plot.contourf(ax=ax, x='time', levels =25, cmap = 'viridis', label=label)
+                                else:  # -> I don't know when this case applies,...
+                                    data.isel({dim: 0 for dim in data.dims[1:]}).plot(ax=ax, label=label, color=color)
+                    
+                ax.set_title(f"{station}" if row==0 else "" )
+                ax.grid()
+
+                ymin,ymax = ax.get_ylim()
+                ymins.append(ymin)
+                ymaxs.append(ymax)
+            
+            for col, station in enumerate(stations):
+                ax = axes[row, col]
+                ax.set_ylim(np.asarray(ymins).min(), np.asarray(ymaxs).max())
+
+        return fig
+    
+
     
     @render.plot
     def plot_target():
