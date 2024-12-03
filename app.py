@@ -1,98 +1,13 @@
 from shiny import App, render, ui, reactive
-import xarray as xr
 import matplotlib.pyplot as plt
 import os
 from itertools import cycle
 import numpy as np
-import yaml
 import pandas as pd
-import seaborn as sns
 from ratelimit import debounce
-from ipyleaflet import Map, Marker, Popup, AwesomeIcon
+from ipyleaflet import Map, Marker, AwesomeIcon
 from shinywidgets import output_widget, render_widget
-
-# Function to load the YAML configuration
-def load_yaml_config(yaml_path):
-    try:
-        with open(yaml_path, 'r') as file:
-            return yaml.safe_load(file)
-    except Exception as e:
-        print(f"Error loading YAML file: {e}")
-        return None
-
-# Function to load the NetCDF file
-def load_netcdf(result_dir, simulation_name, setup, station, is_rates=False):
-    file_name = f'{station}_result_rates.nc' if is_rates else f'{station}_result.nc'
-    file_path = os.path.join(result_dir, simulation_name, setup, file_name)
-    if os.path.exists(file_path):
-        return xr.open_dataset(file_path)
-    return None
-
-# Function to plot a Taylor diagram
-def create_target_diagram(df, add_annotations=False):
-    """
-    Create a target diagram based on the provided statistics.
-    
-    Args:
-    df (pd.DataFrame): DataFrame containing the statistics
-    add_annotations (bool): Whether to add text annotations to the plot
-    
-    Returns:
-    matplotlib.figure.Figure: The created figure
-    """
-
-    # compute some additional statistics
-    df['NormalizedBias']  = df['MeanBias'] / df['StandardDeviationObservations']
-    df['NormalizedcRMSD'] = df['UnbiasedRMSE'] / df['StandardDeviationObservations'] * np.sign(df['StandardDeviationModel'] - df['StandardDeviationObservations'] )
-
-    # Set up the figure and axis
-    fig, ax = plt.subplots(figsize=(10, 10))
-    
-    # Create the scatter plot
-    plot = sns.scatterplot(data=df, x="NormalizedcRMSD", y='NormalizedBias', 
-                    hue='variable', style = 'setup', s=150, ax=ax, legend=True)
-    
-    # Add vertical and horizontal lines
-    ax.axvline(0, color='black', linestyle='--', linewidth=0.5)
-    ax.axhline(0, color='black', linestyle='--', linewidth=0.5)
-    
-    # Add circular guidelines
-    for radius in [0.5, 1]:
-        circle = plt.Circle((0, 0), radius, color='black', fill=False, 
-                            linestyle='--' if radius == 0.5 else '-')
-        ax.add_patch(circle)
-    
-    # Add variable labels to each point
-    for _, row in df.iterrows():
-        ax.annotate(row['variable'], (row["NormalizedcRMSD"], row["NormalizedBias"]),
-                    xytext=(5, 5), textcoords='offset points')
-    
-    # Set plot limits
-    #ax.set_xlim([-3, 3])
-    #ax.set_ylim([-3, 3])
-    
-    # Add title and labels
-    #ax.set_title("Target Diagram", fontsize=16)
-    ax.set_xlabel("Normalized cRMSD", fontsize=12)
-    ax.set_ylabel("Normalized Bias", fontsize=12)
-
-    # Add legend
-    plot.legend(loc='center left', bbox_to_anchor=(1.05, 0.5), ncol=1)
-    
-    if add_annotations:
-        annotations = [
-            (0, 1.8, 'Model overestimates', 'center', 'center'),
-            (0, -1.8, 'Model underestimates', 'center', 'center'),
-            (1.8, 0, 'Too much \nvariations in model', 'center', 'center'),
-            (-1.8, 0, 'Not enough \nvariations in model', 'center', 'center'),
-            (np.sqrt(0.5), np.sqrt(0.5), 'RMS ~ std(obs)', 'center', 'center'),
-            (np.sqrt(0.5)/2, -np.sqrt(0.5)/2, 'RMS ~ 0.5.std(obs)', 'center', 'center')
-        ]
-        
-        for x, y, s, ha, va in annotations:
-            ax.annotate(s, (x, y), ha=ha, va=va, fontweight='bold')
-    
-    return fig
+import custom_functions as cf
 
 # Define a list of colors for setups
 colors = plt.cm.Set1(np.linspace(0, 1, 10))  # 10 distinct colors
@@ -108,7 +23,7 @@ app_ui = ui.page_fluid(
             ui.tags.h3("Simulation", style="font-weight: bold;"),
             ui.input_text("yaml_path", "Path to simulation.yaml", "/home/fricour/bcz1d/experiment/simulation_CHL.yaml"),
             #ui.input_text("yaml_path", "Path to simulation.yaml", "/home/fricour/bcz1d/experiment/test.yaml"),
-            #ui.input_text("yaml_path", "Path to simulation.yaml", "/home/arthur/Desktop/DOCS/PROJECTS/bcz1d_DEV/bcz1d/experiment/simulation_CHL.yaml"),
+            #ui.input_text("yaml_path", "Path to simulation.yaml", "/home/arthur/Desktop/DOCS/PROJECTS/bcz1d_DEV/bcz1d/experiment/simulation_CHL_GE.yaml"),
             ui.input_action_button("load_yaml", "Load YAML Configuration"),
             ui.output_text("yaml_load_status"),
             ui.input_text("result_dir", "Result directory"),
@@ -122,18 +37,14 @@ app_ui = ui.page_fluid(
             ui.input_selectize("yaml_variables", "Variables from YAML", choices=[], multiple=True)
         ),
         ui.navset_tab(
-            ui.nav_panel("Simulation",
-                ui.card(
-                    ui.output_plot("plot_grid"),
-                    ui.output_text("error_message"),
-                    height="calc(100vh - 100px)" # Adjust the 100px value as needed to account for the header
-                ),
+            ui.nav_panel("Time Series",
+                ui.output_ui("dynamic_card_plot_grid"),
+            ),
+            ui.nav_panel("Vertical Profiles",
+                ui.output_ui("dynamic_card_plot_vertical"), 
             ),
             ui.nav_panel("Validation",
-                ui.card(
-                    ui.output_plot("plot_validation"),
-                    height="calc(100vh - 100px)" # Adjust the 100px value as needed to account for the header
-                )
+                ui.output_ui("dynamic_card_plot_validation"),
             ),
             ui.nav_panel("Target Diagram",
                 ui.card(
@@ -165,7 +76,7 @@ def server(input, output, session):
     @reactive.Effect
     @reactive.event(input.load_yaml)
     def load_yaml_file():
-        yaml_config = load_yaml_config(input.yaml_path())
+        yaml_config = cf.load_yaml_config(input.yaml_path())
         if yaml_config:
             config.set(yaml_config)
             ui.update_text("result_dir", value=yaml_config['paths']['result_dir'])
@@ -200,8 +111,8 @@ def server(input, output, session):
                 for i, setup in enumerate(setups):
                     for j, station in enumerate(stations):
                         try:
-                            dataset = load_netcdf(input.result_dir(), input.simulation_name(), setup, station)
-                            dataset_rates = load_netcdf(input.result_dir(), input.simulation_name(), setup, station, is_rates=True)
+                            dataset = cf.load_netcdf(input.result_dir(), input.simulation_name(), setup, station)
+                            dataset_rates = cf.load_netcdf(input.result_dir(), input.simulation_name(), setup, station, is_rates=True)
                             if dataset is not None:
                                 new_datasets[(setup, station, 'result')] = dataset
                             if dataset_rates is not None:
@@ -231,9 +142,21 @@ def server(input, output, session):
             return f"Error: Unable to load any NetCDF files. Please check the directory, simulation name, setups, and stations."
         return ""
 
+    # DYNAMIC CARD PLOT FOR GRID PLOT   
+    @render.ui
+    def dynamic_card_plot_grid():
+        # Calculate card height based on number of subplots
+        card_height = f"{400 * (len(input.variables()))}px"
+        return ui.card(
+            ui.output_plot("plot_grid"),
+            ui.output_text("error_message"),
+            style=f"height: {card_height};"
+        )
+        
+    # TIME SERIES GRID PLOT
     @render.plot
     @debounce(1) # Debounce (1 second) the plot generation to avoid multiple calls (when selecting the input variables)
-    @reactive.event(input.variables, input.load_button)
+    @reactive.event(input.variables, input.load_button, input.setups, input.stations)
     def plot_grid():
         if not datasets() or (not input.variables()):
             return None
@@ -248,9 +171,10 @@ def server(input, output, session):
             
         # Dynamic figure size calculation
         fig_width = min(24, max(12, 5 * n_cols))  # Min 12 inches, max 24 inches, 5 inches per column
-        fig_height = min(100, max(8, 4 * n_rows))  # Min 8 inches, max 36 inches, 4 inches per row
+        fig_height = min(100, max(8, 6 * n_rows))  # Min 8 inches, max 36 inches, 4 inches per row
     
-        fig, axes = plt.subplots(n_rows, n_cols, figsize=(fig_width, fig_height), squeeze=False)
+        fig, axes = plt.subplots(n_rows, n_cols, squeeze=False, sharex='col', sharey='row',
+                                 figsize=(fig_width, fig_height), constrained_layout=True)
             
         setup_colors = {setup: color for setup, color in zip(setups, colors)}
             
@@ -266,19 +190,22 @@ def server(input, output, session):
                             ds = datasets()[(setup, station, data_type)]
                             if var in ds:
                                 #print(ds)
-                                data = ds[var]
+                                data = ds[var].squeeze() # !! Without the squeeze, data retain a lon and lat dimension, so ndims ==4, and only the later case below applies. 
                                 var_long_name = data.attrs.get('long_name')
                                 #print(var_long_name)
                                 label = f"{setup}"
                                 color = setup_colors[setup]
-                                if len(data.dims) == 1:
+                                if len(data.dims) == 1: # -> Assumed : The only dimension is time. 
                                     data.plot(ax=ax, label=label, color=color)
-                                elif len(data.dims) == 2:
-                                    data.isel({data.dims[1]: 0}).plot(ax=ax, label=label, color=color)
-                                else:
+                                elif len(data.dims) == 2: # -> Assumed : The two dimensions are time and depth.
+                                    # TODO : include a controller to choose between surface, bottom, or vertical average values.
+                                    # TODO :  ... at somoe point, vertical integral can also be an option (! consider dz, maybe dynamically)
+                                    # TODO :  ... it could be relevant, to have this choice specifically available for all variables .. 
+                                    # data.isel({data.dims[1]: 0}).plot(ax=ax, label=label, color=color)
+                                    data.mean(data.dims[1]).plot(ax=ax, label=label, color=color)
+                                else:  # -> I don't know when this case i supposed to apply,...
                                     data.isel({dim: 0 for dim in data.dims[1:]}).plot(ax=ax, label=label, color=color)
                     
-
                 ax.set_title(f"{station}" if row==0 else "" )
                 if row != (len(variables) - 1):
                 # Remove x-axis ticks and labels for all rows except the last
@@ -286,13 +213,14 @@ def server(input, output, session):
                     ax.set_xlabel('')
                 else: # keep this else statement for later if needed
                     # For the last row, set only 4 month ticks
-                    #ax.set_xticks([pd.Timestamp(f"2020-{month:02d}-01") for month in [1, 4, 7, 10]]) # without this, it is not working
-                    #ax.set_xticklabels(['Jan', 'Apr', 'Jul', 'Oct'])
+                    # ax.set_xticks([pd.Timestamp(f"2020-{month:02d}-01") for month in [1, 4, 7, 10]]) # without this, it is not working
+                    # ax.set_xticklabels(['Jan', 'Apr', 'Jul', 'Oct'])
                     ax.set_xlabel("Month")
                 if col != 0 :
                     ax.set_yticklabels([])
-                # TODO : Use long name here
-                ax.set_ylabel(var_long_name if col==0 else "" )
+                # Long name to be used only if there's enough room    
+                # ax.set_ylabel(var_long_name if col==0 else "" )
+                ax.set_ylabel('%s \n [%s]'%(var.split('_')[-1], data.attrs.get('units') ) if col==0 else "" )
                 ax.grid()
 
                 if (row==0) and (col==0):
@@ -307,10 +235,89 @@ def server(input, output, session):
                 ax.set_ylim(np.asarray(ymins).min(), np.asarray(ymaxs).max())
 
         return fig
+
+    @render.text
+    def error_message_vertical(): 
+        if not datasets():
+            return f"Error: Unable to load any NetCDF files. Please check the directory, simulation name, setups, and stations."
+        return ""
+
+    # DYNAMIC CARD PLOT FOR VERTICAL PROFILES PLOT
+    @render.ui
+    def dynamic_card_plot_vertical():
+        # Calculate card height based on number of subplots
+        card_height = f"{400 * (len(input.variables()))}px"
+        return ui.card(
+            ui.output_plot("plot_vertical"),
+            ui.output_text("error_message_vertical"),
+            style=f"height: {card_height};"
+        )
+
+    # VERTICAL PROFILES PLOT
+    @render.plot
+    @debounce(1) # Debounce (1 second) the plot generation to avoid multiple calls (when selecting the input variables)
+    @reactive.event(input.variables, input.load_button, input.setups, input.stations)
+    def plot_vertical():
+        if not datasets() or (not input.variables()):
+            return None
+
+        # Show loading notification for plot generation
+        stations = input.stations()
+        setups = input.setups()
+        variables = input.variables()
+            
+        n_rows = len(variables)
+        n_cols = len(stations)
+            
+        # Dynamic figure size calculation
+        fig_width = min(24, max(12, 5 * n_cols))  # Min 12 inches, max 24 inches, 5 inches per column
+        fig_height = min(100, max(8, 6 * n_rows))  # Min 8 inches, max 36 inches, 4 inches per row
     
+        fig, axes = plt.subplots(n_rows, n_cols, figsize=(fig_width, fig_height), squeeze=False)
+            
+        setup_colors = {setup: color for setup, color in zip(setups, colors)}
+            
+        for row, var in enumerate(variables):
+            
+            ymins, ymaxs = [], []            
+            for col, station in enumerate(stations):
+                ax = axes[row, col]
+                    
+                # Showing only the first setup
+                for setup in [setups[0]]: 
+                    for data_type in ['result', 'rates']:
+                        if (setup, station, data_type) in datasets():
+                            ds = datasets()[(setup, station, data_type)]
+                            if var in ds:
+                                data = ds[var].squeeze() # !! Without the squeeze, data retain a lon and lat dimension, so ndims ==4, and only the later case below applies. 
+                                var_long_name = data.attrs.get('long_name')
+                                label = f"{setup} "
+                                color = setup_colors[setup]
+                                if len(data.dims) == 1: # -> Assumed : The only dimension is time. 
+                                    data.plot(ax=ax, label=label, color=color)
+                                elif len(data.dims) == 2: # -> Assumed : The two dimensions are time and depth.
+                                    data.plot.contourf(ax=ax, x='time', levels =25, cmap = 'viridis', label=label)
+                                else:  # -> I don't know when this case applies,...
+                                    data.isel({dim: 0 for dim in data.dims[1:]}).plot(ax=ax, label=label, color=color)
+                    
+                ax.set_title(f"{station}" if row==0 else "" )
+                ax.grid()
+
+                ymin,ymax = ax.get_ylim()
+                ymins.append(ymin)
+                ymaxs.append(ymax)
+            
+            for col, station in enumerate(stations):
+                ax = axes[row, col]
+                ax.set_ylim(np.asarray(ymins).min(), np.asarray(ymaxs).max())
+
+        return fig
+    
+
+    # TARGET DIAGRAM PLOT
     @render.plot
     def plot_target():
-        yaml_config = load_yaml_config(input.yaml_path())
+        yaml_config = cf.load_yaml_config(input.yaml_path())
         try:
             dfs = []
             for i in range(len(input.setups())):
@@ -329,7 +336,7 @@ def server(input, output, session):
             filtered_df = df[df['variable'].isin(selected_vars)]
         
             # Create the target diagram
-            fig = create_target_diagram(filtered_df, add_annotations=False)
+            fig = cf.create_target_diagram(filtered_df, add_annotations=False)
         
             return fig
         
@@ -340,10 +347,19 @@ def server(input, output, session):
             print(f"Error creating Taylor diagram: {e}")
             return plt.figure(figsize=(10, 10))  # Return an empty figure
         
-
+    @render.ui
+    def dynamic_card_plot_validation():
+        # Calculate card height based on number of subplots
+        card_height = f"{400 * (len(input.yaml_variables()))}px"
+        return ui.card(
+            ui.output_plot("plot_validation"),
+            style=f"height: {card_height};"
+        )
+    
+    # VALIDATION PLOT
     @render.plot
     @debounce(0.1)
-    @reactive.event(input.yaml_variables)
+    @reactive.event(input.yaml_variables, input.setups, input.stations)
     def plot_validation():
         if not input.yaml_variables():
             return plt.figure()
@@ -445,8 +461,8 @@ def server(input, output, session):
                             ax.set_xticks([1, 4, 7, 10])
                             ax.set_xticklabels(['Jan', 'Apr', 'Jul', 'Oct'])
                             ax.set_xlabel("Month")
-                        if col != 0: 
-                            ax.set_yticklabels([])
+                        #if col != 0: 
+                        #    ax.set_yticklabels([])
                         ax.set_ylabel(var if col==0 else "" )
                         ax.grid(True)
 
@@ -469,6 +485,7 @@ def server(input, output, session):
         
         return fig
     
+    # MAP PLOT
     @output
     @render_widget
     def map():
