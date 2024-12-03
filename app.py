@@ -256,8 +256,7 @@ def server(input, output, session):
             
         for row, var in enumerate(variables):
             
-            ymins, ymaxs = [], []
-            
+            ymins, ymaxs = [], []            
             for col, station in enumerate(stations):
                 ax = axes[row, col]
                     
@@ -499,5 +498,3 @@ def server(input, output, session):
         return map
 
 app = App(app_ui, server)
-
-
