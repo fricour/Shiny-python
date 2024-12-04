@@ -1,9 +1,11 @@
 from shiny import App, render, ui, reactive
+import xarray as xr
 import matplotlib.pyplot as plt
 import os
-from itertools import cycle
 import numpy as np
+import yaml
 import pandas as pd
+import seaborn as sns
 from ratelimit import debounce
 from ipyleaflet import Map, Marker, AwesomeIcon
 from shinywidgets import output_widget, render_widget
@@ -32,19 +34,31 @@ app_ui = ui.page_fluid(
             ui.input_selectize("setups", "Setups", choices=[], multiple=True),
             ui.input_action_button("load_button", "Load NetCDF data"),
             ui.input_selectize("variables", "All Variables", choices=[], multiple=True),
+            ui.input_action_button("refresh_plot", "Show plots"),
             ui.tags.hr(style="border-top: 2px solid #ccc; margin-top: 20px; margin-bottom: 20px;"),
             ui.tags.h3("Validation", style="font-weight: bold;"),            
             ui.input_selectize("yaml_variables", "Variables from YAML", choices=[], multiple=True)
         ),
         ui.navset_tab(
             ui.nav_panel("Time Series",
-                ui.output_ui("dynamic_card_plot_grid"),
+                ui.card(
+                    ui.output_plot("plot_grid"),
+                    ui.output_text("error_message"),
+                    height="calc(150vh - 100px)" # Adjust the 100px value as needed to account for the header
+                ),
             ),
             ui.nav_panel("Vertical Profiles",
-                ui.output_ui("dynamic_card_plot_vertical"), 
+                ui.card(
+                    ui.output_plot("plot_vert"),
+                    ui.output_text("error_message_vert"),
+                    height="calc(150vh - 100px)" # Adjust the 100px value as needed to account for the header
+                ),
             ),
             ui.nav_panel("Validation",
-                ui.output_ui("dynamic_card_plot_validation"),
+                ui.card(
+                    ui.output_plot("plot_validation"),
+                    height="calc(100vh - 100px)" # Adjust the 100px value as needed to account for the header
+                )
             ),
             ui.nav_panel("Target Diagram",
                 ui.card(
@@ -83,7 +97,6 @@ def server(input, output, session):
             ui.update_text("simulation_name", value=yaml_config['simulation_name'])
             ui.update_selectize("stations", choices=list(yaml_config['stations'].keys()))
             ui.update_selectize("setups", choices=yaml_config['setups'])
-            #ui.update_selectize("yaml_variables", choices=list(yaml_config['variable_mapping'].keys()), selected=list(yaml_config['variable_mapping'].keys()))
             ui.update_selectize("yaml_variables", choices=list(yaml_config['variable_mapping'].keys()))
         else:
             config.set(None)
@@ -142,21 +155,10 @@ def server(input, output, session):
             return f"Error: Unable to load any NetCDF files. Please check the directory, simulation name, setups, and stations."
         return ""
 
-    # DYNAMIC CARD PLOT FOR GRID PLOT   
-    @render.ui
-    def dynamic_card_plot_grid():
-        # Calculate card height based on number of subplots
-        card_height = f"{400 * (len(input.variables()))}px"
-        return ui.card(
-            ui.output_plot("plot_grid"),
-            ui.output_text("error_message"),
-            style=f"height: {card_height};"
-        )
-        
-    # TIME SERIES GRID PLOT
     @render.plot
-    @debounce(1) # Debounce (1 second) the plot generation to avoid multiple calls (when selecting the input variables)
-    @reactive.event(input.variables, input.load_button, input.setups, input.stations)
+    #@debounce(1) # Debounce (1 second) the plot generation to avoid multiple calls (when selecting the input variables)
+    #@reactive.event(input.variables, input.load_button, input.setups, input.stations)
+    @reactive.event(input.refresh_plot)
     def plot_grid():
         if not datasets() or (not input.variables()):
             return None
@@ -173,8 +175,7 @@ def server(input, output, session):
         fig_width = min(24, max(12, 5 * n_cols))  # Min 12 inches, max 24 inches, 5 inches per column
         fig_height = min(100, max(8, 6 * n_rows))  # Min 8 inches, max 36 inches, 4 inches per row
     
-        fig, axes = plt.subplots(n_rows, n_cols, squeeze=False, sharex='col', sharey='row',
-                                 figsize=(fig_width, fig_height), constrained_layout=True)
+        fig, axes = plt.subplots(n_rows, n_cols, figsize=(fig_width, fig_height), squeeze=False)
             
         setup_colors = {setup: color for setup, color in zip(setups, colors)}
             
@@ -213,13 +214,13 @@ def server(input, output, session):
                     ax.set_xlabel('')
                 else: # keep this else statement for later if needed
                     # For the last row, set only 4 month ticks
-                    # ax.set_xticks([pd.Timestamp(f"2020-{month:02d}-01") for month in [1, 4, 7, 10]]) # without this, it is not working
-                    # ax.set_xticklabels(['Jan', 'Apr', 'Jul', 'Oct'])
+                    #ax.set_xticks([pd.Timestamp(f"2020-{month:02d}-01") for month in [1, 4, 7, 10]]) # without this, it is not working
+                    #ax.set_xticklabels(['Jan', 'Apr', 'Jul', 'Oct'])
                     ax.set_xlabel("Month")
                 if col != 0 :
                     ax.set_yticklabels([])
                 # Long name to be used only if there's enough room    
-                # ax.set_ylabel(var_long_name if col==0 else "" )
+#                ax.set_ylabel(var_long_name if col==0 else "" )
                 ax.set_ylabel('%s \n [%s]'%(var.split('_')[-1], data.attrs.get('units') ) if col==0 else "" )
                 ax.grid()
 
@@ -236,28 +237,18 @@ def server(input, output, session):
 
         return fig
 
+
     @render.text
-    def error_message_vertical(): 
+    def error_message_vert(): 
         if not datasets():
             return f"Error: Unable to load any NetCDF files. Please check the directory, simulation name, setups, and stations."
         return ""
 
-    # DYNAMIC CARD PLOT FOR VERTICAL PROFILES PLOT
-    @render.ui
-    def dynamic_card_plot_vertical():
-        # Calculate card height based on number of subplots
-        card_height = f"{400 * (len(input.variables()))}px"
-        return ui.card(
-            ui.output_plot("plot_vertical"),
-            ui.output_text("error_message_vertical"),
-            style=f"height: {card_height};"
-        )
-
-    # VERTICAL PROFILES PLOT
     @render.plot
-    @debounce(1) # Debounce (1 second) the plot generation to avoid multiple calls (when selecting the input variables)
-    @reactive.event(input.variables, input.load_button, input.setups, input.stations)
-    def plot_vertical():
+    #@debounce(1) # Debounce (1 second) the plot generation to avoid multiple calls (when selecting the input variables)
+    #@reactive.event(input.variables, input.load_button, input.setups, input.stations)
+    @reactive.event(input.refresh_plot)
+    def plot_vert():
         if not datasets() or (not input.variables()):
             return None
 
@@ -303,6 +294,10 @@ def server(input, output, session):
                 ax.set_title(f"{station}" if row==0 else "" )
                 ax.grid()
 
+                # remove y-label for all columns except the first one
+                if col != 0:
+                    ax.set_ylabel("")
+
                 ymin,ymax = ax.get_ylim()
                 ymins.append(ymin)
                 ymaxs.append(ymax)
@@ -313,8 +308,6 @@ def server(input, output, session):
 
         return fig
     
-
-    # TARGET DIAGRAM PLOT
     @render.plot
     def plot_target():
         yaml_config = cf.load_yaml_config(input.yaml_path())
@@ -347,19 +340,10 @@ def server(input, output, session):
             print(f"Error creating Taylor diagram: {e}")
             return plt.figure(figsize=(10, 10))  # Return an empty figure
         
-    @render.ui
-    def dynamic_card_plot_validation():
-        # Calculate card height based on number of subplots
-        card_height = f"{400 * (len(input.yaml_variables()))}px"
-        return ui.card(
-            ui.output_plot("plot_validation"),
-            style=f"height: {card_height};"
-        )
-    
-    # VALIDATION PLOT
+
     @render.plot
     @debounce(0.1)
-    @reactive.event(input.yaml_variables, input.setups, input.stations)
+    @reactive.event(input.yaml_variables)
     def plot_validation():
         if not input.yaml_variables():
             return plt.figure()
@@ -485,7 +469,6 @@ def server(input, output, session):
         
         return fig
     
-    # MAP PLOT
     @output
     @render_widget
     def map():
