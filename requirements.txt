@@ -5,6 +5,6 @@ netCDF4
 numpy
 pandas
 seaborn
-yaml
+PyYAML
 shinywidgets
-ipyleafet
+ipyleaflet
